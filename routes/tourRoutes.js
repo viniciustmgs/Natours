@@ -17,6 +17,6 @@ router
 router
   .route('/')
   .get(tourController.getAllTours)
-  .post(tourController.checkPostBody, tourController.createTour);
+  .post(tourController.createTour);
 
 module.exports = router;
