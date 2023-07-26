@@ -7,9 +7,9 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-const app = require('./app');
+dotenv.config({ path: './.env' });
 
-dotenv.config({ path: './config.env' });
+const app = require('./app');
 
 const DB = process.env.DB_CONNECTION.replace(
   '<PASSWORD>',

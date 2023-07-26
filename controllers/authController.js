@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { promisify } = require('util');
 const jwt = require('jsonwebtoken');
 const User = require('../models/userModel');
@@ -10,6 +11,24 @@ const signToken = (id) =>
     expiresIn: process.env.JWT_EXPIRES_IN,
   });
 
+const createSendToken = (user, statusCode, response) => {
+  const token = signToken(user._id);
+  const cookieOptions = {
+    expires: new Date(
+      Date.now() + process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000
+    ),
+    httpOnly: true,
+  };
+  if (process.env.NODE_ENV === 'production') cookieOptions.secure = true;
+  response.cookie('jwt', token, cookieOptions);
+  user.password = undefined;
+  response.status(statusCode).json({
+    status: 'success',
+    token,
+    data: { user },
+  });
+};
+
 exports.signup = catchAsync(async (request, response, next) => {
   const newUser = await User.create({
     name: request.body.name,
@@ -18,12 +37,7 @@ exports.signup = catchAsync(async (request, response, next) => {
     passwordConfirm: request.body.passwordConfirm,
     role: request.body.role,
   });
-  const token = signToken(newUser._id);
-  response.status(201).json({
-    status: 'success',
-    token,
-    data: { user: newUser },
-  });
+  createSendToken(newUser, 201, response);
 });
 
 exports.login = catchAsync(async (request, response, next) => {
@@ -33,11 +47,7 @@ exports.login = catchAsync(async (request, response, next) => {
   const user = await User.findOne({ email }).select('+password');
   if (!user || !(await user.correctPassword(password, user.password)))
     return next(new AppError('Incorrect email or password', 401));
-  const token = signToken(user._id);
-  response.status(200).json({
-    status: 'success',
-    token,
-  });
+  createSendToken(user, 200, response);
 });
 
 exports.protect = catchAsync(async (request, response, next) => {
@@ -106,4 +116,33 @@ exports.forgotPassword = catchAsync(async (request, response, next) => {
     );
   }
 });
-exports.resetPassword = (request, response, next) => {};
+exports.resetPassword = catchAsync(async (request, response, next) => {
+  const hashedToken = crypto
+    .createHash('sha256')
+    .update(request.params.token)
+    .digest('hex');
+  const user = await User.findOne({
+    passwordResetToken: hashedToken,
+    passwordResetExpires: { $gt: Date.now() },
+  });
+  if (!user) {
+    return next(new AppError('Token is invalid or has expired!', 400));
+  }
+  user.password = request.body.password;
+  user.passwordConfirm = request.body.passwordConfirm;
+  user.passwordResetToken = undefined;
+  user.passwordResetExpires = undefined;
+  await user.save();
+  createSendToken(user, 200, response);
+});
+
+exports.updatePassword = catchAsync(async (request, response, next) => {
+  const user = await User.findById(request.user.id).select('+password');
+  if (!user.correctPassword(request.body.passwordCurrent, user.password)) {
+    return next(new AppError('Your current password is wrong.', 401));
+  }
+  user.password = request.body.password;
+  user.passwordConfirm = request.body.passwordConfirm;
+  await user.save();
+  createSendToken(user, 200, response);
+});
